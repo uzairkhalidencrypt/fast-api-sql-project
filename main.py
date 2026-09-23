@@ -1,11 +1,14 @@
+from fastapi import FastAPI
 from unicodedata import name
-
-from fastapi import FastAPI, Depends, HTTPException
+# from passlib import CryptContext
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import declarative_base, sessionmaker
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+
 
 # Database configuration and connection
 DATABASE_URL = "sqlite:///./test.db"
@@ -23,6 +26,8 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     email = Column(String, unique=True, index=True)
+    # Store hashed password instead of plain text
+    hashed_password = Column(String)
 
 
 # Create tables if they do not exist
@@ -51,6 +56,73 @@ class Config:
 
 # FastAPI instance setup
 app = FastAPI()
+# A mock asynchronous function to simulate async behavior
+# 1. Import the asynchronous utility library
+
+app = FastAPI()
+
+
+# A mock asynchronous heavy background operation
+async def heavy_background_job(user_email: str):
+    print(f"[Event Loop] Starting slow data job for {user_email}...")
+
+    # asyncio.sleep simulates a non-blocking network wait (e.g., calling an email server)
+    await asyncio.sleep(5)
+
+    print(
+        f"[Event Loop] Background job finished successfully for {user_email}!")
+
+
+@app.post("/trigger-job")
+async def trigger_job(email: str):
+    # THE ARCHITECTURE KEY:
+    # asyncio.create_task tells the event loop to run this function in the background.
+    # It does NOT use await so the endpoint finishes and returns instantly
+    asyncio.create_task(heavy_background_job(email))
+
+    return {"status": "Success", "message": "Job scheduled on the event loop. Check terminal."}
+
+ # USing Payload to send data to the background job function
+
+
+class JobPayload(BaseModel):
+    id: int
+    name: str
+    email: str
+
+
+async def heavy_background_job(user_id: int, user_name: str, user_email: str):
+    # simulate a heavy background job using all three parameters
+    await asyncio.sleep(5)
+    print(
+        f"Processed job for ID {user_id}, Name {user_name}, Email {user_email}...")
+
+    # asyncio.sleep simulates a non-blocking network wait (calling an email server)
+    await asyncio.sleep(5)
+
+    print(
+        f"[Event Loop] Background job finished successfully for {user_email}!")
+
+
+@app.post("/trigger-job-payload")
+async def trigger_job_payload(payload: JobPayload, background_tasks: BackgroundTasks):
+    background_tasks.add_task(heavy_background_job,
+                              payload.id, payload.name, payload.email)
+
+    return {"status": "Success", "message": "Job scheduled on the event loop payload. Check terminal."}
+# Initialize password hashing context
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Encrypt password using bcrypt hashing algorithm
+
+
+# def hash_password(password: str) -> str:
+    # return pwd_context.hash(password)
+# Verify password against hashed value
+
+
+# def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # return pwd_context.verify(plain_password, hashed_password)
+
 
 # Define allowed origins for CORS
 origins = [
@@ -151,3 +223,17 @@ def update_user(user_id: int, user: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
     return db_user
+# Authentication endpoint (login) to verify user credentials
+
+
+@app.post("/login")
+def login(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="Invalid credentials")
+    # Verify password (if hashing is implemented)
+    if not verify_password(user.password, db_user.hashed_password):
+        raise HTTPException(
+            status_code=404, detail="Invalid email or password")
+    # Return user data on successful login
+    return {"message": "Login successful", "user": {"id": db_user.id, "name": db_user.name, "email": db_user.email}}
